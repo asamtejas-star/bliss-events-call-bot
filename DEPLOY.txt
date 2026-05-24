@@ -1,0 +1,58 @@
+Deploy Bliss AI Call Bot Online (24/7)
+======================================
+
+Yes — you should run this on a server in production. Your PC + ngrok is only
+for testing. Online hosting gives you a permanent URL so Twilio always reaches
+the bot.
+
+RECOMMENDED: Render.com (simple)
+--------------------------------
+Cost: about $7/month for always-on (Starter plan). Free tier sleeps — bad for phone calls.
+
+1. Push this project to GitHub (private repo is fine).
+
+2. Sign up at https://render.com and connect GitHub.
+
+3. New → Blueprint → connect repo (uses render.yaml in this folder)
+   OR New → Web Service → connect repo manually:
+     - Build:  pip install -r requirements.txt
+     - Start:  uvicorn app.main:app --host 0.0.0.0 --port $PORT
+
+4. In Render → Environment, add these variables:
+
+   BUSINESS_NAME=Your Business Name
+   PUBLIC_BASE_URL=https://YOUR-APP-NAME.onrender.com
+   TWILIO_ACCOUNT_SID=...
+   TWILIO_AUTH_TOKEN=...
+   TWILIO_WEBHOOK_AUTH_TOKEN=...        (same as auth token)
+   GOOGLE_SHEET_ID=...
+   GOOGLE_SHEET_TAB=Leads
+   OPENAI_API_KEY=sk-...
+   OPENAI_MODEL=gpt-4o-mini
+
+   GOOGLE_SERVICE_ACCOUNT_JSON=
+     Paste the ENTIRE contents of google-service-account.json on one line.
+     (Copy from credentials/google-service-account.json — keep it secret.)
+
+5. Deploy. When live, open https://YOUR-APP.onrender.com/health — should show ok.
+
+6. Twilio → your phone number → Voice webhook POST:
+   https://YOUR-APP.onrender.com/voice/incoming
+
+7. Update PUBLIC_BASE_URL in Render env to match your real URL if you renamed it.
+   Redeploy if you change env vars.
+
+OTHER HOSTS (same idea)
+-----------------------
+Railway, Fly.io, Google Cloud Run, AWS, DigitalOcean — all work.
+
+Always set:
+  - Start command: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+  - All .env variables in the host dashboard
+  - PUBLIC_BASE_URL = your app's https URL (no trailing slash)
+  - GOOGLE_SERVICE_ACCOUNT_JSON = full JSON (for cloud; file path only works locally)
+
+LOCAL PC vs SERVER
+------------------
+  Local + ngrok  → testing only, URL changes, PC must stay on
+  Online server  → production, stable URL, runs 24/7

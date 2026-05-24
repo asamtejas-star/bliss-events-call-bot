@@ -1,0 +1,108 @@
+Bliss AI — Phone Call Bot Setup
+================================
+
+Your AI answers incoming phone calls, asks for:
+  - Caller name
+  - Event type
+  - Requested date
+
+Then saves each call to Google Sheets and says your team will call back
+soon to finalize payment and other details.
+
+WHAT YOU PAY (roughly)
+----------------------
+  Twilio phone number     ~$1.15/month
+  Twilio voice (incoming) ~$0.008–$0.02 per minute
+  OpenAI (optional)       ~$0.001 per call (speech cleanup)
+  Google Sheets           $0
+  Hosting (optional)      $0 on your PC + ngrok free tier, or ~$5+/mo on Railway/Render
+
+STEP 1 — Twilio (phone line)
+----------------------------
+1. Sign up: https://www.twilio.com
+2. Buy a phone number (Console → Phone Numbers → Buy a number)
+   - Enable "Voice" on the number
+3. Copy Account SID and Auth Token from Console home page
+4. Put them in .env:
+     TWILIO_ACCOUNT_SID=...
+     TWILIO_AUTH_TOKEN=...
+     TWILIO_WEBHOOK_AUTH_TOKEN=...   (same as Auth Token, for security)
+
+STEP 2 — Google Sheet
+---------------------
+1. Create a spreadsheet at https://sheets.google.com
+2. Copy the Sheet ID from the URL (between /d/ and /edit)
+3. Google Cloud Console → new project → enable "Google Sheets API"
+4. IAM → Service Accounts → Create → download JSON key
+5. Save as: credentials/google-service-account.json
+6. Share the spreadsheet with the service account email (Editor)
+7. In .env:
+     GOOGLE_SHEET_ID=your_sheet_id
+     GOOGLE_SHEET_TAB=Leads
+
+STEP 3 — OpenAI (recommended, not required)
+--------------------------------------------
+1. https://platform.openai.com → API keys → create key
+2. In .env: OPENAI_API_KEY=sk-...
+   (If left blank, the bot still works with basic speech parsing.)
+
+STEP 4 — Run the server on your PC
+----------------------------------
+1. Copy .env.example to .env and fill in all values above.
+
+2. Install:
+   python -m venv .venv
+   .venv\Scripts\activate
+   pip install -r requirements.txt
+
+3. Start the server:
+   uvicorn app.main:app --host 0.0.0.0 --port 8000
+   (Or double-click / run:  .\run.ps1)
+
+4. In a second terminal, expose it to the internet:
+   ngrok http 8000
+   Copy the https URL (e.g. https://abc123.ngrok-free.app)
+
+5. In .env set (no trailing slash):
+   PUBLIC_BASE_URL=https://abc123.ngrok-free.app
+   Restart uvicorn after changing .env.
+
+STEP 5 — Connect Twilio to your server
+--------------------------------------
+Twilio Console → Phone Numbers → your number → Configure → Voice:
+
+  "A call comes in" → Webhook
+  Method: POST
+  URL: https://YOUR-PUBLIC-URL/voice/incoming
+
+Save. Call your Twilio number to test.
+
+STEP 6 — Use your real business number (optional)
+-------------------------------------------------
+In Twilio, you can forward your existing business line to the Twilio number,
+OR port your number to Twilio (Console → Phone Numbers → Port).
+
+SPREADSHEET COLUMNS
+-------------------
+Timestamp | Caller Phone | Caller Name | Event Type | Requested Date
+
+PRODUCTION — RUN ONLINE 24/7 (recommended)
+------------------------------------------
+Do NOT use your PC + ngrok for real business use. Deploy to a server instead.
+
+See DEPLOY.txt for step-by-step Render instructions (~$7/mo always-on).
+
+Summary:
+  1. Push code to GitHub
+  2. Deploy on Render.com (or Railway, Fly.io, etc.)
+  3. Add all .env variables in the host dashboard
+  4. Set PUBLIC_BASE_URL to your app URL (e.g. https://bliss-bot.onrender.com)
+  5. Set GOOGLE_SERVICE_ACCOUNT_JSON to the full JSON file contents
+  6. Twilio webhook → https://your-app.onrender.com/voice/incoming
+
+TROUBLESHOOTING
+---------------
+- Call connects but bot silent? Check PUBLIC_BASE_URL matches ngrok/deploy URL exactly.
+- 403 errors in logs? TWILIO_WEBHOOK_AUTH_TOKEN must match Twilio Auth Token.
+- Sheet not updating? Share sheet with service account email; check GOOGLE_SHEET_ID.
+- Test health: open https://YOUR-URL/health in a browser.

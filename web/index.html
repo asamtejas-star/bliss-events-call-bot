@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bliss AI Assistant</title>
+  <script src="config.js"></script>
+  <style>
+    :root {
+      --bg: #0f0f14;
+      --card: #1a1a24;
+      --accent: #c9a227;
+      --text: #f4f4f8;
+      --muted: #9a9ab0;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: radial-gradient(circle at top, #1e1e2e, var(--bg));
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+    }
+    .card {
+      width: min(480px, 100%);
+      background: var(--card);
+      border: 1px solid #2a2a3a;
+      border-radius: 20px;
+      padding: 2rem;
+      box-shadow: 0 24px 60px rgba(0,0,0,.45);
+    }
+    h1 { margin: 0 0 .25rem; font-size: 1.5rem; }
+    .sub { color: var(--muted); margin-bottom: 1.5rem; font-size: .95rem; }
+    .bubble {
+      background: #252535;
+      border-radius: 14px;
+      padding: 1rem 1.1rem;
+      min-height: 4.5rem;
+      line-height: 1.5;
+      margin-bottom: 1.25rem;
+    }
+    .status { color: var(--muted); font-size: .85rem; margin-bottom: 1rem; }
+    button {
+      width: 100%;
+      border: none;
+      border-radius: 12px;
+      padding: 1rem;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform .15s, opacity .15s;
+    }
+    #talkBtn {
+      background: linear-gradient(135deg, var(--accent), #e8c547);
+      color: #1a1408;
+    }
+    #talkBtn:disabled { opacity: .5; cursor: not-allowed; }
+    #talkBtn:not(:disabled):active { transform: scale(.98); }
+    .hint { margin-top: 1rem; color: var(--muted); font-size: .8rem; text-align: center; }
+    .free-badge {
+      display: inline-block;
+      background: #1e3a2f;
+      color: #7dcea0;
+      font-size: .75rem;
+      padding: .2rem .55rem;
+      border-radius: 999px;
+      margin-bottom: 1rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <span class="free-badge">100% free — no API fees</span>
+    <h1 id="title">Virtual Assistant</h1>
+    <p class="sub">Speak your name, event type, and preferred date. We'll save it to our spreadsheet.</p>
+    <p class="status" id="status">Tap the button to start</p>
+    <div class="bubble" id="assistantText">Ready when you are.</div>
+    <button id="talkBtn" type="button">Start conversation</button>
+    <p class="hint">Works best in Chrome or Edge on desktop or Android. Uses free browser speech — no Twilio or OpenAI.</p>
+  </motion.div>
+
+  <script>
+    const cfg = window.BLISS_CONFIG || {};
+    const businessName = cfg.businessName || "our business";
+    const appsScriptUrl = cfg.appsScriptUrl || "";
+    const closingMessage =
+      "Perfect! Our team will call you back soon to finalize payment and other details. Thank you, and have a wonderful day!";
+
+    document.getElementById("title").textContent = businessName + " Assistant";
+
+    const steps = [
+      { key: "name", say: `Thank you for contacting ${businessName}. May I have your name, please?`, field: "name" },
+      { key: "event", say: "Thanks! What type of event are you planning?", field: "eventType" },
+      { key: "date", say: "Great. What date are you looking for?", field: "date" },
+    ];
+
+    let stepIndex = 0;
+    const data = { name: "", eventType: "", date: "" };
+    let recognition = null;
+    let speaking = false;
+
+    const statusEl = document.getElementById("status");
+    const bubbleEl = document.getElementById("assistantText");
+    const talkBtn = document.getElementById("talkBtn");
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+    }
+
+    function setBubble(text) {
+      bubbleEl.textContent = text;
+    }
+
+    function speak(text) {
+      return new Promise((resolve) => {
+        const utter = new SpeechSynthesisUtterance(text);
+        utter.rate = 1;
+        utter.onend = () => {
+          speaking = false;
+          resolve();
+        };
+        utter.onerror = () => {
+          speaking = false;
+          resolve();
+        };
+        speaking = true;
+        speechSynthesis.speak(utter);
+      });
+    }
+
+    function listen() {
+      return new Promise((resolve, reject) => {
+        if (!SpeechRecognition) {
+          reject(new Error("Speech recognition not supported in this browser."));
+          return;
+        }
+        recognition = new SpeechRecognition();
+        recognition.lang = "en-US";
+        recognition.interimResults = false;
+        recognition.maxAlternatives = 1;
+        recognition.onresult = (e) => resolve(e.results[0][0].transcript.trim());
+        recognition.onerror = (e) => reject(new Error(e.error || "listen failed"));
+        recognition.onend = () => {};
+        setStatus("Listening…");
+        recognition.start();
+      });
+    }
+
+    async function saveToSheet() {
+      if (!appsScriptUrl || appsScriptUrl.includes("PASTE_YOUR")) {
+        console.warn("Apps Script URL not configured");
+        return false;
+      }
+      const params = new URLSearchParams({
+        source: "web",
+        contact: "browser",
+        name: data.name,
+        eventType: data.eventType,
+        date: data.date,
+      });
+      try {
+        await fetch(`${appsScriptUrl}?${params.toString()}`, { mode: "no-cors" });
+        return true;
+      } catch (err) {
+        console.error(err);
+        return false;
+      }
+    }
+
+    async function runStep() {
+      const step = steps[stepIndex];
+      setBubble(step.say);
+      await speak(step.say);
+
+      try {
+        const heard = await listen();
+        data[step.field] = heard;
+        setBubble(`You said: "${heard}"`);
+        stepIndex += 1;
+
+        if (stepIndex < steps.length) {
+          await new Promise((r) => setTimeout(r, 600));
+          await runStep();
+        } else {
+          setStatus("Saving…");
+          await saveToSheet();
+          setBubble(closingMessage);
+          await speak(closingMessage);
+          setStatus("Done — our team will follow up soon");
+          talkBtn.textContent = "Start another conversation";
+          talkBtn.disabled = false;
+          stepIndex = 0;
+          data.name = "";
+          data.eventType = "";
+          data.date = "";
+        }
+      } catch (err) {
+        setStatus("Couldn't hear you — try again");
+        setBubble("I didn't catch that. Please tap the button and try again.");
+        talkBtn.disabled = false;
+      }
+    }
+
+    talkBtn.addEventListener("click", async () => {
+      if (!SpeechRecognition) {
+        alert("Please use Chrome or Edge for voice. Or message us on Telegram (free bot in SETUP.txt).");
+        return;
+      }
+      if (!appsScriptUrl || appsScriptUrl.includes("PASTE_YOUR")) {
+        alert("Add your Apps Script URL to web/config.js first (see SETUP.txt).");
+        return;
+      }
+      talkBtn.disabled = true;
+      stepIndex = 0;
+      data.name = "";
+      data.eventType = "";
+      data.date = "";
+      setStatus("Starting…");
+      await runStep();
+    });
+  </script>
+</body>
+</html>
