@@ -9,6 +9,8 @@ from app.config import (
     BUSINESS_NAME,
     FALLBACK_PHONE,
     GOOGLE_SHEET_ID,
+    OPENAI_API_KEY,
+    OPENAI_MODEL,
     PUBLIC_BASE_URL,
     TWILIO_ACCOUNT_SID,
 )
@@ -68,4 +70,6 @@ def health():
         "business": BUSINESS_NAME,
         "webhook_base_url": PUBLIC_BASE_URL or "(not set)",
         "fallback_phone": FALLBACK_PHONE,
+        "openai_enabled": bool(OPENAI_API_KEY),
+        "openai_model": OPENAI_MODEL if OPENAI_API_KEY else None,
     }

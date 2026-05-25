@@ -32,13 +32,11 @@ def _xml_response(twiml: VoiceResponse) -> Response:
 
 
 def _phone_for_speech(phone: str) -> str:
-    """Format a phone number so text-to-speech reads digits clearly."""
+    """Speak each digit separately: 4, 8, 0, 5, 7, 7, 3, 0, 9, 0"""
     digits = "".join(c for c in phone if c.isdigit())
-    if len(digits) == 10:
-        return f"{digits[:3]}, {digits[3:6]}, {digits[6:]}"
-    if len(digits) == 11 and digits.startswith("1"):
-        return f"{digits[1:4]}, {digits[4:7]}, {digits[7:]}"
-    return phone
+    if not digits:
+        return phone
+    return ", ".join(digits)
 
 
 def build_error_twiml(call_sid: str | None = None) -> Response:
