@@ -34,3 +34,6 @@ CLOSING_MESSAGE = (
 
 # Spoken to callers when the bot hits an error (configurable in Render / .env)
 FALLBACK_PHONE = os.getenv("FALLBACK_PHONE", "480-577-3090")
+
+# Twilio free basic TTS only — use "man" or "woman" (Polly/neural voices cost extra)
+TWILIO_VOICE = os.getenv("TWILIO_VOICE", "man")

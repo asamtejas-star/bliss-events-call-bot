@@ -14,6 +14,8 @@ services:
         sync: false
       - key: FALLBACK_PHONE
         value: "480-577-3090"
+      - key: TWILIO_VOICE
+        value: man
       - key: PUBLIC_BASE_URL
         sync: false
       - key: TWILIO_ACCOUNT_SID

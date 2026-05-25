@@ -9,6 +9,7 @@ from app.config import (
     CLOSING_MESSAGE,
     FALLBACK_PHONE,
     PUBLIC_BASE_URL,
+    TWILIO_VOICE,
     TWILIO_WEBHOOK_AUTH_TOKEN,
 )
 from app.services.openai_extract import extract_field
@@ -31,6 +32,12 @@ def _xml_response(twiml: VoiceResponse) -> Response:
     return Response(content=str(twiml), media_type="application/xml")
 
 
+def _say(target, message: str) -> None:
+    """Twilio free basic voice (man or woman — no Polly/neural charges)."""
+    voice = TWILIO_VOICE if TWILIO_VOICE in ("man", "woman") else "man"
+    target.say(message, voice=voice, language="en-US")
+
+
 def _phone_for_speech(phone: str) -> str:
     """Speak each digit separately: 4, 8, 0, 5, 7, 7, 3, 0, 9, 0"""
     digits = "".join(c for c in phone if c.isdigit())
@@ -44,9 +51,10 @@ def build_error_twiml(call_sid: str | None = None) -> Response:
         clear_session(call_sid)
     spoken = _phone_for_speech(FALLBACK_PHONE)
     response = VoiceResponse()
-    response.say(
+    _say(
+        response,
         "We're sorry, something went wrong with our phone system. "
-        f"Please call us directly at {spoken}. Goodbye."
+        f"Please call us directly at {spoken}. Goodbye.",
     )
     response.hangup()
     return _xml_response(response)
@@ -83,9 +91,9 @@ def _increment_retry(session, step: str) -> None:
 
 def _ask_step(response: VoiceResponse, step: str) -> None:
     gather = _gather_speech("/voice/handle", PROMPTS[step])
-    gather.say(PROMPTS[step])
+    _say(gather, PROMPTS[step])
     response.append(gather)
-    response.say("I didn't catch that. Let me try again.")
+    _say(response, "I didn't catch that. Let me try again.")
     response.redirect(f"{PUBLIC_BASE_URL}/voice/handle", method="POST")
 
 
@@ -101,9 +109,10 @@ def _advance_or_retry(
         return True
 
     if _retry_count(session, step) >= MAX_RETRIES:
-        response.say(
+        _say(
+            response,
             "I'm having trouble hearing you. Please call back when you're ready, "
-            "or leave a message with your name, event type, and preferred date. Goodbye."
+            "or leave a message with your name, event type, and preferred date. Goodbye.",
         )
         response.hangup()
         clear_session(call_sid)
@@ -203,12 +212,13 @@ async def handle_speech(
                 )
             except Exception:
                 logger.exception("Failed to save lead to Google Sheets")
-                response.say(
+                _say(
+                    response,
                     "I have your details, but I had trouble saving them. "
-                    "Our team will still follow up with you shortly."
+                    "Our team will still follow up with you shortly.",
                 )
             else:
-                response.say(CLOSING_MESSAGE)
+                _say(response, CLOSING_MESSAGE)
 
             clear_session(CallSid)
             response.hangup()
