@@ -31,3 +31,6 @@ CLOSING_MESSAGE = (
     "Perfect! Our team will call you back soon to finalize payment and other details. "
     "Thank you for calling, and have a wonderful day!"
 )
+
+# Spoken to callers when the bot hits an error (configurable in Render / .env)
+FALLBACK_PHONE = os.getenv("FALLBACK_PHONE", "480-577-3090")

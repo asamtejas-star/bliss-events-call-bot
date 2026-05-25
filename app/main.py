@@ -1,7 +1,9 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 from app.config import (
     BUSINESS_NAME,
@@ -36,6 +38,26 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="Bliss AI Call Bot", version="1.0.0", lifespan=lifespan)
 app.include_router(voice.router)
+
+
+@app.exception_handler(RequestValidationError)
+async def voice_validation_error(request: Request, exc: RequestValidationError):
+    if request.url.path.startswith("/voice"):
+        logger.warning("Validation error on voice route: %s", exc)
+        from app.routes.voice import build_error_twiml
+
+        return build_error_twiml()
+    return JSONResponse(status_code=422, content={"detail": exc.errors()})
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception(request: Request, exc: Exception):
+    if request.url.path.startswith("/voice"):
+        logger.exception("Unhandled error on voice route: %s", exc)
+        from app.routes.voice import build_error_twiml
+
+        return build_error_twiml()
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
 @app.get("/health")

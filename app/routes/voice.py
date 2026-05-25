@@ -7,6 +7,7 @@ from twilio.twiml.voice_response import Gather, VoiceResponse
 from app.config import (
     BUSINESS_NAME,
     CLOSING_MESSAGE,
+    FALLBACK_PHONE,
     PUBLIC_BASE_URL,
     TWILIO_WEBHOOK_AUTH_TOKEN,
 )
@@ -28,6 +29,29 @@ PROMPTS = {
 
 def _xml_response(twiml: VoiceResponse) -> Response:
     return Response(content=str(twiml), media_type="application/xml")
+
+
+def _phone_for_speech(phone: str) -> str:
+    """Format a phone number so text-to-speech reads digits clearly."""
+    digits = "".join(c for c in phone if c.isdigit())
+    if len(digits) == 10:
+        return f"{digits[:3]}, {digits[3:6]}, {digits[6:]}"
+    if len(digits) == 11 and digits.startswith("1"):
+        return f"{digits[1:4]}, {digits[4:7]}, {digits[7:]}"
+    return phone
+
+
+def build_error_twiml(call_sid: str | None = None) -> Response:
+    if call_sid:
+        clear_session(call_sid)
+    spoken = _phone_for_speech(FALLBACK_PHONE)
+    response = VoiceResponse()
+    response.say(
+        "We're sorry, something went wrong with our phone system. "
+        f"Please call us directly at {spoken}. Goodbye."
+    )
+    response.hangup()
+    return _xml_response(response)
 
 
 def _validate_twilio(request: Request, form: dict) -> bool:
@@ -92,22 +116,38 @@ def _advance_or_retry(
     return False
 
 
+@router.post("/fallback")
+@router.post("/error")
+async def voice_fallback(request: Request):
+    """Twilio 'primary handler fails' URL — same message as other errors."""
+    return build_error_twiml()
+
+
 @router.post("/incoming")
 async def incoming_call(
     request: Request,
     CallSid: str = Form(...),
     From: str = Form(default=""),
 ):
-    form = dict(await request.form())
-    if not _validate_twilio(request, form):
-        return Response(status_code=403)
+    try:
+        form = dict(await request.form())
+        if not _validate_twilio(request, form):
+            logger.warning("Invalid Twilio signature on /incoming")
+            return build_error_twiml(CallSid)
 
-    clear_session(CallSid)
-    session = get_session(CallSid, caller_phone=From)
+        if not PUBLIC_BASE_URL:
+            logger.error("PUBLIC_BASE_URL is not set")
+            return build_error_twiml(CallSid)
 
-    response = VoiceResponse()
-    _ask_step(response, session.step)
-    return _xml_response(response)
+        clear_session(CallSid)
+        session = get_session(CallSid, caller_phone=From)
+
+        response = VoiceResponse()
+        _ask_step(response, session.step)
+        return _xml_response(response)
+    except Exception:
+        logger.exception("Error in /voice/incoming")
+        return build_error_twiml(CallSid)
 
 
 @router.post("/handle")
@@ -117,60 +157,67 @@ async def handle_speech(
     From: str = Form(default=""),
     SpeechResult: str = Form(default=""),
 ):
-    form = dict(await request.form())
-    if not _validate_twilio(request, form):
-        return Response(status_code=403)
+    try:
+        form = dict(await request.form())
+        if not _validate_twilio(request, form):
+            logger.warning("Invalid Twilio signature on /handle")
+            return build_error_twiml(CallSid)
 
-    session = get_session(CallSid, caller_phone=From)
-    response = VoiceResponse()
-    speech = (SpeechResult or "").strip()
+        if not PUBLIC_BASE_URL:
+            logger.error("PUBLIC_BASE_URL is not set")
+            return build_error_twiml(CallSid)
 
-    if session.step == "name":
-        value = extract_field("name", speech)
-        if not _advance_or_retry(CallSid, session, "name", value, response):
+        session = get_session(CallSid, caller_phone=From)
+        response = VoiceResponse()
+        speech = (SpeechResult or "").strip()
+
+        if session.step == "name":
+            value = extract_field("name", speech)
+            if not _advance_or_retry(CallSid, session, "name", value, response):
+                return _xml_response(response)
+            session.caller_name = value
+            session.step = "event_type"
+            _ask_step(response, "event_type")
             return _xml_response(response)
-        session.caller_name = value
-        session.step = "event_type"
-        _ask_step(response, "event_type")
-        return _xml_response(response)
 
-    if session.step == "event_type":
-        value = extract_field("event_type", speech)
-        if not _advance_or_retry(CallSid, session, "event_type", value, response):
+        if session.step == "event_type":
+            value = extract_field("event_type", speech)
+            if not _advance_or_retry(CallSid, session, "event_type", value, response):
+                return _xml_response(response)
+            session.event_type = value
+            session.step = "date"
+            _ask_step(response, "date")
             return _xml_response(response)
-        session.event_type = value
-        session.step = "date"
-        _ask_step(response, "date")
-        return _xml_response(response)
 
-    if session.step == "date":
-        value = extract_field("date", speech)
-        if not _advance_or_retry(CallSid, session, "date", value, response):
+        if session.step == "date":
+            value = extract_field("date", speech)
+            if not _advance_or_retry(CallSid, session, "date", value, response):
+                return _xml_response(response)
+            session.event_date = value
+            session.step = "done"
+
+            try:
+                append_lead(
+                    caller_phone=session.caller_phone or From,
+                    caller_name=session.caller_name,
+                    event_type=session.event_type,
+                    event_date=session.event_date,
+                )
+            except Exception:
+                logger.exception("Failed to save lead to Google Sheets")
+                response.say(
+                    "I have your details, but I had trouble saving them. "
+                    "Our team will still follow up with you shortly."
+                )
+            else:
+                response.say(CLOSING_MESSAGE)
+
+            clear_session(CallSid)
+            response.hangup()
             return _xml_response(response)
-        session.event_date = value
-        session.step = "done"
 
-        try:
-            append_lead(
-                caller_phone=session.caller_phone or From,
-                caller_name=session.caller_name,
-                event_type=session.event_type,
-                event_date=session.event_date,
-            )
-        except Exception:
-            logger.exception("Failed to save lead to Google Sheets")
-            response.say(
-                "I have your details, but I had trouble saving them. "
-                "Our team will still follow up with you shortly."
-            )
-        else:
-            response.say(CLOSING_MESSAGE)
-
-        clear_session(CallSid)
-        response.hangup()
-        return _xml_response(response)
-
-    response.say("Something went wrong. Please call back. Goodbye.")
-    response.hangup()
-    clear_session(CallSid)
-    return _xml_response(response)
+        logger.warning("Unexpected call state for CallSid=%s step=%s", CallSid, session.step)
+        return build_error_twiml(CallSid)
+    except Exception:
+        logger.exception("Error in /voice/handle")
+        return build_error_twiml(CallSid)
