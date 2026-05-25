@@ -21,6 +21,8 @@ Cost: about $7/month for always-on (Starter plan). Free tier sleeps — bad for 
 4. In Render → Environment, add these variables:
 
    BUSINESS_NAME=Your Business Name
+   FALLBACK_PHONE=480-577-3090
+     (Change only this in Render to update the number spoken when the bot errors.)
    PUBLIC_BASE_URL=https://YOUR-APP-NAME.onrender.com
    TWILIO_ACCOUNT_SID=...
    TWILIO_AUTH_TOKEN=...
