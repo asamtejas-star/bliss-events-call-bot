@@ -13,7 +13,7 @@ def _get_client() -> OpenAI | None:
     if not OPENAI_API_KEY:
         return None
     if _client is None:
-        _client = OpenAI(api_key=OPENAI_API_KEY)
+        _client = OpenAI(api_key=OPENAI_API_KEY, timeout=8.0)
     return _client
 
 
@@ -48,6 +48,10 @@ def extract_field(field: str, speech: str) -> str:
     speech = (speech or "").strip()
     if not speech:
         return ""
+
+    # Names: skip OpenAI so Twilio webhooks respond quickly and reliably
+    if field == "name":
+        return _fallback_extract("name", speech)
 
     client = _get_client()
     if client is None:

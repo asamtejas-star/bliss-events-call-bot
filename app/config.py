@@ -36,4 +36,4 @@ CLOSING_MESSAGE = (
 FALLBACK_PHONE = os.getenv("FALLBACK_PHONE", "480-577-3090")
 
 # Twilio free basic TTS only — use "man" or "woman" (Polly/neural voices cost extra)
-TWILIO_VOICE = os.getenv("TWILIO_VOICE", "man")
+TWILIO_VOICE = os.getenv("TWILIO_VOICE", "woman")

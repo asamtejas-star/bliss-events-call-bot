@@ -34,7 +34,7 @@ def _xml_response(twiml: VoiceResponse) -> Response:
 
 def _say(target, message: str) -> None:
     """Twilio free basic voice (man or woman — no Polly/neural charges)."""
-    voice = TWILIO_VOICE if TWILIO_VOICE in ("man", "woman") else "man"
+    voice = TWILIO_VOICE if TWILIO_VOICE in ("man", "woman") else "woman"
     target.say(message, voice=voice, language="en-US")
 
 
@@ -60,24 +60,38 @@ def build_error_twiml(call_sid: str | None = None) -> Response:
     return _xml_response(response)
 
 
+def _twilio_validation_url(request: Request) -> str:
+    """Build the public URL Twilio used (fixes https/proxy mismatches on Render)."""
+    path = request.url.path
+    query = request.url.query
+    url = f"{PUBLIC_BASE_URL}{path}"
+    if query:
+        url += f"?{query}"
+    return url
+
+
 def _validate_twilio(request: Request, form: dict) -> bool:
     if not TWILIO_WEBHOOK_AUTH_TOKEN:
         return True
     signature = request.headers.get("X-Twilio-Signature", "")
-    url = str(request.url)
     validator = RequestValidator(TWILIO_WEBHOOK_AUTH_TOKEN)
-    return validator.validate(url, form, signature)
+    return validator.validate(_twilio_validation_url(request), form, signature)
 
 
-def _gather_speech(action_path: str, prompt: str) -> Gather:
+def _handle_action_url(step: str) -> str:
+    return f"{PUBLIC_BASE_URL}/voice/handle?step={step}"
+
+
+def _gather_speech(step: str) -> Gather:
     return Gather(
         input="speech",
-        action=f"{PUBLIC_BASE_URL}{action_path}",
+        action=_handle_action_url(step),
         method="POST",
         speech_timeout="auto",
         speech_model="phone_call",
         language="en-US",
-        timeout=5,
+        timeout=10,
+        hints="name, wedding, birthday, party, date",
     )
 
 
@@ -90,11 +104,11 @@ def _increment_retry(session, step: str) -> None:
 
 
 def _ask_step(response: VoiceResponse, step: str) -> None:
-    gather = _gather_speech("/voice/handle", PROMPTS[step])
+    gather = _gather_speech(step)
     _say(gather, PROMPTS[step])
     response.append(gather)
     _say(response, "I didn't catch that. Let me try again.")
-    response.redirect(f"{PUBLIC_BASE_URL}/voice/handle", method="POST")
+    response.redirect(_handle_action_url(step), method="POST")
 
 
 def _advance_or_retry(
@@ -175,8 +189,18 @@ async def handle_speech(
             return build_error_twiml(CallSid)
 
         session = get_session(CallSid, caller_phone=From)
+        step_param = request.query_params.get("step")
+        if step_param in ("name", "event_type", "date"):
+            session.step = step_param  # type: ignore[assignment]
+
         response = VoiceResponse()
         speech = (SpeechResult or "").strip()
+        logger.info(
+            "CallSid=%s step=%s speech=%r",
+            CallSid,
+            session.step,
+            speech[:80] if speech else "",
+        )
 
         if session.step == "name":
             value = extract_field("name", speech)
