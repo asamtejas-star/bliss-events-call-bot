@@ -8,7 +8,14 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 BUSINESS_NAME = os.getenv("BUSINESS_NAME", "our business")
-PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+def _normalize_public_base_url(url: str) -> str:
+    url = url.rstrip("/")
+    if url.endswith("/health"):
+        url = url[: -len("/health")]
+    return url.rstrip("/")
+
+
+PUBLIC_BASE_URL = _normalize_public_base_url(os.getenv("PUBLIC_BASE_URL", ""))
 
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")

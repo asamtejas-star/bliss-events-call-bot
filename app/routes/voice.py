@@ -60,10 +60,18 @@ def build_error_twiml(call_sid: str | None = None) -> Response:
     return _xml_response(response)
 
 
+def _normalize_base_url(url: str) -> str:
+    """Strip trailing /health or slashes — common mistake when copying from browser."""
+    url = url.rstrip("/")
+    if url.endswith("/health"):
+        url = url[: -len("/health")]
+    return url.rstrip("/")
+
+
 def _public_base_url(request: Request) -> str:
     """App URL for TwiML callbacks — env var or Render/proxy headers."""
     if PUBLIC_BASE_URL:
-        return PUBLIC_BASE_URL
+        return _normalize_base_url(PUBLIC_BASE_URL)
     host = request.headers.get("X-Forwarded-Host") or request.headers.get("Host")
     proto = request.headers.get("X-Forwarded-Proto", "https")
     if host:
