@@ -14,7 +14,7 @@ from app.config import (
 )
 from app.services.openai_extract import extract_field
 from app.services.sheets import append_lead
-from app.services.state import clear_session, get_session
+from app.services.state import VALID_STEPS, clear_session, get_session
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/voice", tags=["voice"])
@@ -22,9 +22,18 @@ router = APIRouter(prefix="/voice", tags=["voice"])
 MAX_RETRIES = 2
 
 PROMPTS = {
-    "name": f"Thank you for calling {BUSINESS_NAME}. I'm your virtual assistant. May I have your name, please?",
+    "name": (
+        f"Thank you for calling {BUSINESS_NAME}. I'm your virtual assistant. "
+        "May I have your name, please?"
+    ),
+    "name_spell": (
+        "Thank you. Please spell your first and last name, letter by letter."
+    ),
     "event_type": "Thanks! What type of event are you planning?",
-    "date": "Great. What date are you looking for?",
+    "date": (
+        "Great. What date are you looking for? "
+        "You can say the month and day; we will assume this year unless you say another year."
+    ),
 }
 
 
@@ -235,7 +244,7 @@ async def handle_speech(
 
         session = get_session(CallSid, caller_phone=From)
         step_param = request.query_params.get("step")
-        if step_param in ("name", "event_type", "date"):
+        if step_param in VALID_STEPS:
             session.step = step_param  # type: ignore[assignment]
 
         response = VoiceResponse()
@@ -248,8 +257,14 @@ async def handle_speech(
         )
 
         if session.step == "name":
-            value = extract_field("name", speech)
-            if not _advance_or_retry(CallSid, session, "name", value, response, base_url):
+            # Ignore spoken name — only the spelling step is saved
+            session.step = "name_spell"
+            _ask_step(response, "name_spell", base_url)
+            return _xml_response(response)
+
+        if session.step == "name_spell":
+            value = extract_field("name_spell", speech)
+            if not _advance_or_retry(CallSid, session, "name_spell", value, response, base_url):
                 return _xml_response(response)
             session.caller_name = value
             session.step = "event_type"

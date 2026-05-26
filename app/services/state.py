@@ -1,7 +1,9 @@
 from dataclasses import dataclass, field
 from typing import Literal
 
-Step = Literal["name", "event_type", "date", "done"]
+Step = Literal["name", "name_spell", "event_type", "date", "done"]
+
+VALID_STEPS = ("name", "name_spell", "event_type", "date")
 
 
 @dataclass
