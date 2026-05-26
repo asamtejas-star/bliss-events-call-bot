@@ -1,19 +1,24 @@
 from dataclasses import dataclass, field
 from typing import Literal
 
-Step = Literal["name", "name_spell", "event_type", "date", "done"]
+Step = Literal["name", "name_first", "name_last", "event_type", "date", "done"]
 
-VALID_STEPS = ("name", "name_spell", "event_type", "date")
+VALID_STEPS = ("name", "name_first", "name_last", "event_type", "date")
 
 
 @dataclass
 class CallSession:
     step: Step = "name"
+    first_name: str = ""
+    last_name: str = ""
     caller_name: str = ""
     event_type: str = ""
     event_date: str = ""
     caller_phone: str = ""
     retries: dict[str, int] = field(default_factory=dict)
+
+    def update_full_name(self) -> None:
+        self.caller_name = f"{self.first_name} {self.last_name}".strip()
 
 
 _sessions: dict[str, CallSession] = {}

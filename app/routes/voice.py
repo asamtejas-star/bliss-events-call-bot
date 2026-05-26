@@ -24,16 +24,12 @@ MAX_RETRIES = 2
 PROMPTS = {
     "name": (
         f"Thank you for calling {BUSINESS_NAME}. I'm your virtual assistant. "
-        "May I have your name, please?"
+        "What's your full name?"
     ),
-    "name_spell": (
-        "Thank you. Please spell your first and last name, letter by letter."
-    ),
+    "name_first": "Thank you. Please spell your first name, letter by letter.",
+    "name_last": "Great. Now please spell your last name, letter by letter.",
     "event_type": "Thanks! What type of event are you planning?",
-    "date": (
-        "Great. What date are you looking for? "
-        "You can say the month and day; we will assume this year unless you say another year."
-    ),
+    "date": "Great. What date are you looking for?",
 }
 
 
@@ -257,16 +253,26 @@ async def handle_speech(
         )
 
         if session.step == "name":
-            # Ignore spoken name — only the spelling step is saved
-            session.step = "name_spell"
-            _ask_step(response, "name_spell", base_url)
+            # Casual full name is not saved — spelling steps are used instead
+            session.step = "name_first"
+            _ask_step(response, "name_first", base_url)
             return _xml_response(response)
 
-        if session.step == "name_spell":
-            value = extract_field("name_spell", speech)
-            if not _advance_or_retry(CallSid, session, "name_spell", value, response, base_url):
+        if session.step == "name_first":
+            value = extract_field("name_first", speech)
+            if not _advance_or_retry(CallSid, session, "name_first", value, response, base_url):
                 return _xml_response(response)
-            session.caller_name = value
+            session.first_name = value
+            session.step = "name_last"
+            _ask_step(response, "name_last", base_url)
+            return _xml_response(response)
+
+        if session.step == "name_last":
+            value = extract_field("name_last", speech)
+            if not _advance_or_retry(CallSid, session, "name_last", value, response, base_url):
+                return _xml_response(response)
+            session.last_name = value
+            session.update_full_name()
             session.step = "event_type"
             _ask_step(response, "event_type", base_url)
             return _xml_response(response)

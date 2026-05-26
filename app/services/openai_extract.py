@@ -65,7 +65,7 @@ def parse_spelled_name(speech: str) -> str:
         letters_only = re.sub(r"[^a-zA-Z]", "", word)
         if not letters_only:
             continue
-        if letters_only.lower() in ("space", "and"):
+        if letters_only.lower() in ("space", "and", "dot"):
             if letter_run:
                 name_parts.append("".join(letter_run))
                 letter_run = []
@@ -103,8 +103,8 @@ def extract_field(field: str, speech: str) -> str:
     if not speech:
         return ""
 
-    # Spelled names are parsed locally (letter-by-letter step only)
-    if field == "name_spell":
+    # Spelled first/last names are parsed locally (letter-by-letter only)
+    if field in ("name_first", "name_last"):
         return parse_spelled_name(speech)
 
     client = _get_client()
