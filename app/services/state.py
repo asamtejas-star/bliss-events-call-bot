@@ -1,14 +1,14 @@
 from dataclasses import dataclass, field
 from typing import Literal
 
-Step = Literal["name", "name_first", "name_last", "event_type", "date", "done"]
+Step = Literal["name_first", "name_last", "event_type", "date", "done"]
 
-VALID_STEPS = ("name", "name_first", "name_last", "event_type", "date")
+VALID_STEPS = ("name_first", "name_last", "event_type", "date")
 
 
 @dataclass
 class CallSession:
-    step: Step = "name"
+    step: Step = "name_first"
     first_name: str = ""
     last_name: str = ""
     caller_name: str = ""

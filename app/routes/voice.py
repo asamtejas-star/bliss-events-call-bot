@@ -1,4 +1,5 @@
 import logging
+import re
 
 from fastapi import APIRouter, Form, Request, Response
 from twilio.request_validator import RequestValidator
@@ -22,15 +23,19 @@ router = APIRouter(prefix="/voice", tags=["voice"])
 MAX_RETRIES = 2
 
 PROMPTS = {
-    "name": (
+    "name_first": (
         f"Thank you for calling {BUSINESS_NAME}. I'm your virtual assistant. "
-        "What's your full name?"
+        "Please spell your first name, letter by letter."
     ),
-    "name_first": "Thank you. Please spell your first name, letter by letter.",
-    "name_last": "Great. Now please spell your last name, letter by letter.",
+    "name_last": "Thank you. Now please spell your last name, letter by letter.",
     "event_type": "Thanks! What type of event are you planning?",
     "date": "Great. What date are you looking for?",
 }
+
+# Brief noises Twilio sometimes transcribes — do not count as an answer
+_NOISE_UTTERANCES = frozenset(
+    {"uh", "um", "umm", "hmm", "hm", "ah", "oh", "yeah", "yes", "no", "ok", "okay"}
+)
 
 
 def _xml_response(twiml: VoiceResponse) -> Response:
@@ -129,16 +134,29 @@ def _handle_action_url(base_url: str, step: str) -> str:
     return f"{base_url}/voice/handle?step={step}"
 
 
-def _gather_speech(base_url: str, step: str) -> Gather:
+def _gather_speech(base_url: str, step: str, *, spelling: bool = False) -> Gather:
+    # barge_in=False: background noise won't interrupt the question
+    # Longer silence window when spelling so pauses between letters are OK
     return Gather(
         input="speech",
         action=_handle_action_url(base_url, step),
         method="POST",
-        speech_timeout="auto",
+        barge_in=False,
+        speech_timeout="4" if spelling else "auto",
         speech_model="phone_call",
         language="en-US",
-        timeout=10,
+        timeout=12 if spelling else 10,
     )
+
+
+def _accept_answer(step: str, value: str) -> bool:
+    if not value or not value.strip():
+        return False
+    if value.strip().lower() in _NOISE_UTTERANCES:
+        return False
+    if step in ("name_first", "name_last"):
+        return len(re.sub(r"[^a-zA-Z]", "", value)) >= 2
+    return len(value.strip()) >= 2
 
 
 def _retry_count(session, step: str) -> int:
@@ -150,9 +168,11 @@ def _increment_retry(session, step: str) -> None:
 
 
 def _ask_step(response: VoiceResponse, step: str, base_url: str) -> None:
-    gather = _gather_speech(base_url, step)
+    spelling = step in ("name_first", "name_last")
+    gather = _gather_speech(base_url, step, spelling=spelling)
     _say(gather, PROMPTS[step])
     response.append(gather)
+    # Only runs if caller says nothing — not when they make a brief noise
     _say(response, "I didn't catch that. Let me try again.")
     response.redirect(_handle_action_url(base_url, step), method="POST")
 
@@ -166,7 +186,7 @@ def _advance_or_retry(
     base_url: str,
 ) -> bool:
     """Returns True if step was captured and we should continue."""
-    if value:
+    if _accept_answer(step, value):
         return True
 
     if _retry_count(session, step) >= MAX_RETRIES:
@@ -251,12 +271,6 @@ async def handle_speech(
             session.step,
             speech[:80] if speech else "",
         )
-
-        if session.step == "name":
-            # Casual full name is not saved — spelling steps are used instead
-            session.step = "name_first"
-            _ask_step(response, "name_first", base_url)
-            return _xml_response(response)
 
         if session.step == "name_first":
             value = extract_field("name_first", speech)
