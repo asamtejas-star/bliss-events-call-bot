@@ -134,6 +134,10 @@ def _handle_action_url(base_url: str, step: str) -> str:
     return f"{base_url}/voice/handle?step={step}"
 
 
+def _listen_url(base_url: str, step: str) -> str:
+    return f"{base_url}/voice/listen?step={step}"
+
+
 def _gather_speech(base_url: str, step: str, *, spelling: bool = False) -> Gather:
     # barge_in=False: background noise won't interrupt the question
     # Longer silence window when spelling so pauses between letters are OK
@@ -168,11 +172,16 @@ def _increment_retry(session, step: str) -> None:
 
 
 def _ask_step(response: VoiceResponse, step: str, base_url: str) -> None:
+    """Play the question to completion, then start listening on a separate request."""
+    _say(response, PROMPTS[step])
+    response.redirect(_listen_url(base_url, step), method="POST")
+
+
+def _start_listening(response: VoiceResponse, step: str, base_url: str) -> None:
+    """Gather only — used after the question has fully finished playing."""
     spelling = step in ("name_first", "name_last")
     gather = _gather_speech(base_url, step, spelling=spelling)
-    _say(gather, PROMPTS[step])
     response.append(gather)
-    # Only runs if caller says nothing — not when they make a brief noise
     _say(response, "I didn't catch that. Let me try again.")
     response.redirect(_handle_action_url(base_url, step), method="POST")
 
@@ -209,6 +218,37 @@ def _advance_or_retry(
 async def voice_fallback(request: Request):
     """Twilio 'primary handler fails' URL — same message as other errors."""
     return build_error_twiml()
+
+
+@router.post("/listen")
+async def listen_for_answer(
+    request: Request,
+    CallSid: str = Form(...),
+):
+    """Start speech recognition only after the prompt has finished playing."""
+    try:
+        form = dict(await request.form())
+        base_url = _public_base_url(request)
+
+        if not _validate_twilio(request, form):
+            return build_error_twiml(CallSid)
+
+        if not base_url:
+            logger.error("Cannot determine public URL — set PUBLIC_BASE_URL on Render")
+            return build_error_twiml(CallSid)
+
+        step = request.query_params.get("step")
+        if step not in VALID_STEPS:
+            logger.warning("Invalid listen step: %s", step)
+            return build_error_twiml(CallSid)
+
+        response = VoiceResponse()
+        _start_listening(response, step, base_url)
+        logger.info("Listening CallSid=%s step=%s", CallSid, step)
+        return _xml_response(response)
+    except Exception:
+        logger.exception("Error in /voice/listen")
+        return build_error_twiml(CallSid)
 
 
 @router.post("/incoming")
