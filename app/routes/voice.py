@@ -30,6 +30,10 @@ PROMPTS = {
     "name_last": "Thank you. Now please spell your last name, letter by letter.",
     "event_type": "Thanks! What type of event are you planning?",
     "date": "Great. What date are you looking for?",
+    "date_retry": (
+        "That doesn't seem like a valid date. "
+        "Please give a real month and day, for example June 15th."
+    ),
 }
 
 # Brief noises Twilio sometimes transcribes — do not count as an answer
@@ -171,9 +175,10 @@ def _increment_retry(session, step: str) -> None:
     session.retries[step] = _retry_count(session, step) + 1
 
 
-def _ask_step(response: VoiceResponse, step: str, base_url: str) -> None:
+def _ask_step(response: VoiceResponse, step: str, base_url: str, *, retry: bool = False) -> None:
     """Play the question to completion, then start listening on a separate request."""
-    _say(response, PROMPTS[step])
+    prompt = PROMPTS.get(f"{step}_retry" if retry and f"{step}_retry" in PROMPTS else step, PROMPTS[step])
+    _say(response, prompt)
     response.redirect(_listen_url(base_url, step), method="POST")
 
 
@@ -209,7 +214,7 @@ def _advance_or_retry(
         return False
 
     _increment_retry(session, step)
-    _ask_step(response, step, base_url)
+    _ask_step(response, step, base_url, retry=True)
     return False
 
 
