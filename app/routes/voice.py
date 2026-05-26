@@ -60,38 +60,71 @@ def build_error_twiml(call_sid: str | None = None) -> Response:
     return _xml_response(response)
 
 
-def _twilio_validation_url(request: Request) -> str:
-    """Build the public URL Twilio used (fixes https/proxy mismatches on Render)."""
+def _public_base_url(request: Request) -> str:
+    """App URL for TwiML callbacks — env var or Render/proxy headers."""
+    if PUBLIC_BASE_URL:
+        return PUBLIC_BASE_URL
+    host = request.headers.get("X-Forwarded-Host") or request.headers.get("Host")
+    proto = request.headers.get("X-Forwarded-Proto", "https")
+    if host:
+        return f"{proto}://{host}".rstrip("/")
+    return ""
+
+
+def _validation_url_candidates(request: Request) -> list[str]:
+    """URLs Twilio may have signed (proxy-aware)."""
     path = request.url.path
     query = request.url.query
-    url = f"{PUBLIC_BASE_URL}{path}"
-    if query:
-        url += f"?{query}"
-    return url
+    suffix = f"{path}?{query}" if query else path
+
+    candidates: list[str] = []
+    host = request.headers.get("X-Forwarded-Host") or request.headers.get("Host")
+    proto = request.headers.get("X-Forwarded-Proto", "https")
+
+    if host:
+        candidates.append(f"{proto}://{host}{suffix}")
+
+    if PUBLIC_BASE_URL:
+        candidates.append(f"{PUBLIC_BASE_URL.rstrip('/')}{suffix}")
+
+    return list(dict.fromkeys(candidates))
 
 
 def _validate_twilio(request: Request, form: dict) -> bool:
     if not TWILIO_WEBHOOK_AUTH_TOKEN:
         return True
+
     signature = request.headers.get("X-Twilio-Signature", "")
+    if not signature:
+        logger.warning("Missing X-Twilio-Signature header")
+        return False
+
     validator = RequestValidator(TWILIO_WEBHOOK_AUTH_TOKEN)
-    return validator.validate(_twilio_validation_url(request), form, signature)
+    for url in _validation_url_candidates(request):
+        if validator.validate(url, form, signature):
+            return True
+
+    logger.warning(
+        "Invalid Twilio signature. Tried URLs: %s. "
+        "Ensure TWILIO_WEBHOOK_AUTH_TOKEN matches your Twilio Auth Token exactly.",
+        _validation_url_candidates(request),
+    )
+    return False
 
 
-def _handle_action_url(step: str) -> str:
-    return f"{PUBLIC_BASE_URL}/voice/handle?step={step}"
+def _handle_action_url(base_url: str, step: str) -> str:
+    return f"{base_url}/voice/handle?step={step}"
 
 
-def _gather_speech(step: str) -> Gather:
+def _gather_speech(base_url: str, step: str) -> Gather:
     return Gather(
         input="speech",
-        action=_handle_action_url(step),
+        action=_handle_action_url(base_url, step),
         method="POST",
         speech_timeout="auto",
         speech_model="phone_call",
         language="en-US",
         timeout=10,
-        hints="name, wedding, birthday, party, date",
     )
 
 
@@ -103,12 +136,12 @@ def _increment_retry(session, step: str) -> None:
     session.retries[step] = _retry_count(session, step) + 1
 
 
-def _ask_step(response: VoiceResponse, step: str) -> None:
-    gather = _gather_speech(step)
+def _ask_step(response: VoiceResponse, step: str, base_url: str) -> None:
+    gather = _gather_speech(base_url, step)
     _say(gather, PROMPTS[step])
     response.append(gather)
     _say(response, "I didn't catch that. Let me try again.")
-    response.redirect(_handle_action_url(step), method="POST")
+    response.redirect(_handle_action_url(base_url, step), method="POST")
 
 
 def _advance_or_retry(
@@ -117,6 +150,7 @@ def _advance_or_retry(
     step: str,
     value: str,
     response: VoiceResponse,
+    base_url: str,
 ) -> bool:
     """Returns True if step was captured and we should continue."""
     if value:
@@ -133,7 +167,7 @@ def _advance_or_retry(
         return False
 
     _increment_retry(session, step)
-    _ask_step(response, step)
+    _ask_step(response, step, base_url)
     return False
 
 
@@ -152,19 +186,21 @@ async def incoming_call(
 ):
     try:
         form = dict(await request.form())
+        base_url = _public_base_url(request)
+
         if not _validate_twilio(request, form):
-            logger.warning("Invalid Twilio signature on /incoming")
             return build_error_twiml(CallSid)
 
-        if not PUBLIC_BASE_URL:
-            logger.error("PUBLIC_BASE_URL is not set")
+        if not base_url:
+            logger.error("Cannot determine public URL — set PUBLIC_BASE_URL on Render")
             return build_error_twiml(CallSid)
 
         clear_session(CallSid)
         session = get_session(CallSid, caller_phone=From)
 
         response = VoiceResponse()
-        _ask_step(response, session.step)
+        _ask_step(response, session.step, base_url)
+        logger.info("Incoming call CallSid=%s base_url=%s", CallSid, base_url)
         return _xml_response(response)
     except Exception:
         logger.exception("Error in /voice/incoming")
@@ -180,12 +216,13 @@ async def handle_speech(
 ):
     try:
         form = dict(await request.form())
+        base_url = _public_base_url(request)
+
         if not _validate_twilio(request, form):
-            logger.warning("Invalid Twilio signature on /handle")
             return build_error_twiml(CallSid)
 
-        if not PUBLIC_BASE_URL:
-            logger.error("PUBLIC_BASE_URL is not set")
+        if not base_url:
+            logger.error("Cannot determine public URL — set PUBLIC_BASE_URL on Render")
             return build_error_twiml(CallSid)
 
         session = get_session(CallSid, caller_phone=From)
@@ -204,25 +241,25 @@ async def handle_speech(
 
         if session.step == "name":
             value = extract_field("name", speech)
-            if not _advance_or_retry(CallSid, session, "name", value, response):
+            if not _advance_or_retry(CallSid, session, "name", value, response, base_url):
                 return _xml_response(response)
             session.caller_name = value
             session.step = "event_type"
-            _ask_step(response, "event_type")
+            _ask_step(response, "event_type", base_url)
             return _xml_response(response)
 
         if session.step == "event_type":
             value = extract_field("event_type", speech)
-            if not _advance_or_retry(CallSid, session, "event_type", value, response):
+            if not _advance_or_retry(CallSid, session, "event_type", value, response, base_url):
                 return _xml_response(response)
             session.event_type = value
             session.step = "date"
-            _ask_step(response, "date")
+            _ask_step(response, "date", base_url)
             return _xml_response(response)
 
         if session.step == "date":
             value = extract_field("date", speech)
-            if not _advance_or_retry(CallSid, session, "date", value, response):
+            if not _advance_or_retry(CallSid, session, "date", value, response, base_url):
                 return _xml_response(response)
             session.event_date = value
             session.step = "done"
